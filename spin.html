@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spin the Wheel Game</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        #wheel-container {
+            position: relative;
+            width: 400px;
+            height: 400px;
+            margin: 0 auto;
+        }
+        #arrow {
+            position: absolute;
+            top: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 20px solid transparent;
+            border-right: 20px solid transparent;
+            border-top: 40px solid red;
+            z-index: 10;
+        }
+        button {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div id="wheel-container">
+        <div id="arrow"></div>
+        <svg id="wheel" width="400" height="400"></svg>
+    </div>
+    <button onclick="spinWheel()">Spin</button>
+
+    <script>
+        const wheelItems = ['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5', 'Item 6', 'Item 7', 'Item 8'];
+        const colors = d3.schemeCategory10;
+        const width = 400;
+        const height = 400;
+        const radius = Math.min(width, height) / 2;
+
+        const svg = d3.select("#wheel")
+            .append("g")
+            .attr("transform", `translate(${width / 2},${height / 2})`);
+
+        const pie = d3.pie().value(() => 1).sort(null);
+        const arc = d3.arc().innerRadius(0).outerRadius(radius);
+
+        const arcs = svg.selectAll("arc")
+            .data(pie(wheelItems))
+            .enter()
+            .append("g")
+            .attr("class", "arc");
+
+        arcs.append("path")
+            .attr("d", arc)
+            .attr("fill", (d, i) => colors[i % colors.length])
+            .attr("stroke", "white")
+            .attr("stroke-width", "2");
+
+        arcs.append("text")
+            .attr("transform", d => `translate(${arc.centroid(d)})`)
+            .attr("text-anchor", "middle")
+            .text((d) => d.data)
+            .style("font-size", "12px")
+            .style("fill", "white");
+
+        let rotation = 0;
+        let isSpinning = false;
+
+        function spinWheel() {
+            if (isSpinning) return;
+            isSpinning = true;
+
+            const spinDuration = 5000;
+            const spinRotation = Math.floor(Math.random() * 360) + 720;
+
+            rotation = (rotation + spinRotation) % 360;
+
+            d3.select("#wheel g").transition()
+                .duration(spinDuration)
+                .ease(d3.easeQuadInOut)
+                .attrTween("transform", () => {
+                    return (t) => `translate(${width / 2},${height / 2}) rotate(${t * spinRotation})`;
+                })
+                .on("end", () => {
+                    isSpinning = false;
+                    const normalizedRotation = (360 - rotation) % 360;
+                    const result = wheelItems[Math.floor(normalizedRotation / (360 / wheelItems.length))];
+                    alert(`You landed on: ${result}`);
+                });
+        }
+    </script>
+</body>
+</html>
