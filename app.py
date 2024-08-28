@@ -137,7 +137,7 @@ if st.session_state.api_key and check_access_key(st.session_state.api_key):
                 st.write("Participant already registered twice")
                 st.error("Participant already registered twice")
 
-    @st.dialog("Processed Document",width="large")
+    @st.experimental_dialog("Processed Document",width="large")
     def add_participant(participant, img):
         st.write(participant)
         if st.button("Confirm Save to MongoDB"):
