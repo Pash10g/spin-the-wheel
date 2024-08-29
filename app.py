@@ -127,6 +127,7 @@ if st.session_state.api_key and check_access_key(st.session_state.api_key):
             st.write("Participant not found, registering...")
             participant['registration_count'] = 1
             participant['ruffle_ids'] = [st.session_state.ruffle_id]
+            participant['event'] = st.session_state.api_key
             participants.insert_one(participant)
         
         else:
