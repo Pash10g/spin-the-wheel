@@ -6,57 +6,73 @@
     <title>Spin the Wheel Game</title>
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://unpkg.com/realm-web/dist/bundle.iife.js"></script>
     <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
         #wheel-container {
             position: relative;
-            width: 400px;
-            height: 400px;
+            width: 600px;
+            height: 600px;
             margin: 0 auto;
         }
         #arrow {
             position: absolute;
-            top: -20px;
+            top: -25px;
             left: 50%;
             transform: translateX(-50%);
             width: 0;
             height: 0;
-            border-left: 20px solid transparent;
-            border-right: 20px solid transparent;
-            border-top: 40px solid red;
+            border-left: 25px solid transparent;
+            border-right: 25px solid transparent;
+            border-top: 50px solid #00684A;
             z-index: 10;
         }
-        button {
+        #spinButton {
             display: block;
             margin: 20px auto;
             padding: 10px 20px;
             font-size: 18px;
+            background-color: #00ED64;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .slice-text {
+            font-size: 14px;
+            fill: white;
+            font-weight: bold;
+        }
+        .name-label {
+            fill: rgba(0, 0, 0, 0.9);
+            stroke: #000;
+            stroke-width: 0.5px;
         }
     </style>
 </head>
 <body>
     <div id="wheel-container">
         <div id="arrow"></div>
-        <svg id="wheel" width="400" height="400"></svg>
+        <svg id="wheel" width="600" height="600"></svg>
     </div>
     <button id="spinButton" onclick="spinWheel()">Spin</button>
+
     <script>
-        const urlParams = new URLSearchParams(window.location.search);
-        const participants = urlParams.get('participants');
-        let wheelItems;
-        try {
-            wheelItems = JSON.parse(participants);
-            if (!Array.isArray(wheelItems) || wheelItems.length === 0) {
-                throw new Error('Invalid or empty participants array');
-            }
-        } catch (error) {
-            console.error('Error parsing participants:', error);
-            wheelItems = ['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5', 'Item 6', 'Item 7', 'Item 8'];
-        }
+        const REALM_APP_ID = 'spin-the-wheel-gdesxmh';
+        const app = new Realm.App({ id: REALM_APP_ID });
         const axios = window.axios;
         
-        const colors = d3.schemeCategory10;
-        const width = 400;
-        const height = 400;
+        const colors = ['#00ED64', '#13AA52', '#00684A', '#023430', '#3D4F58', '#001E2B'];
+        const width = 600;
+        const height = 600;
         const radius = Math.min(width, height) / 2;
 
         const svg = d3.select("#wheel")
@@ -68,30 +84,164 @@
 
         const wheelGroup = svg.append("g");
 
-        const arcs = wheelGroup.selectAll("arc")
-            .data(pie(wheelItems))
-            .enter()
-            .append("g")
-            .attr("class", "arc");
 
-        arcs.append("path")
-            .attr("d", arc)
-            .attr("fill", (d, i) => colors[i % colors.length])
-            .attr("stroke", "white")
-            .attr("stroke-width", "2");
+        async function loginAnonymous() {
+            const user = await app.logIn(Realm.Credentials.anonymous());
+            return user;
+        }
 
-        arcs.append("text")
-            .attr("transform", d => `translate(${arc.centroid(d)})`)
-            .attr("text-anchor", "middle")
-            .text((d) => d.data)
-            .style("font-size", "12px")
-            .style("fill", "white");
+        async function setupChangeStream() {
+            const user = await loginAnonymous();
+            const mongodb = app.currentUser.mongoClient("mongodb-atlas");
+            await updateWheel();
+            const participantsCollection = mongodb.db("spin_the_wheel").collection("participants");
+            const rufflesCollection = mongodb.db("spin_the_wheel").collection("ruffles");
 
-        let rotation = 0;
+            const participantsChangeStream = participantsCollection.watch();
+            const rufflesChangeStream = rufflesCollection.watch();
+
+            // Function to handle participant changes
+            const handleParticipantChange = async (change) => {
+                console.log("Participant change detected:", change);
+                if (change.operationType === 'insert' || change.operationType === 'update') {
+                    await updateWheel();
+                }
+            };
+
+            // Function to handle ruffle changes
+            const handleRuffleChange = async (change) => {
+                console.log("Ruffle change detected:", change);
+                if (change.operationType === 'insert') {
+                    console.log("New ruffle detected. Resetting wheel...");
+                    await updateWheel();
+                    resetWheel();
+                }
+            };
+
+            // Watch participants collection
+            (async () => {
+                console.log("Watching participants collection...");
+                for await (const change of participantsChangeStream) {
+                    await handleParticipantChange(change);
+                }
+            })().catch(console.error);
+
+            // Watch ruffles collection
+            (async () => {
+                console.log("Watching ruffles collection...");
+                for await (const change of rufflesChangeStream) {
+                    await handleRuffleChange(change);
+                }
+            })().catch(console.error);
+
+            console.log("Change streams set up for participants and ruffles collections");
+        }
+
+        function resetWheel() {
+            rotation = 0;
+            wheelGroup.attr("transform", `rotate(${rotation})`);
+        }
+
+        function rebuildWheel(wheelItems) {
+            wheelGroup.selectAll("*").remove();
+
+            const arcs = wheelGroup.selectAll("arc")
+                .data(pie(wheelItems))
+                .enter()
+                .append("g")
+                .attr("class", "arc");
+
+            arcs.append("path")
+                .attr("d", arc)
+                .attr("fill", (d, i) => colors[i % colors.length])
+                .attr("stroke", "white")
+                .attr("stroke-width", "2");
+
+            arcs.each(function(d, i) {
+                const elem = d3.select(this);
+                const centerAngle = (d.startAngle + d.endAngle) / 2;
+                const sliceRadius = radius * 0.7;
+
+                // Add label rectangle
+                const labelWidth = 120;
+                const labelHeight = 40;
+                elem.append("rect")
+                    .attr("class", "name-label")
+                    .attr("x", -labelWidth / 2)
+                    .attr("y", -labelHeight / 2)
+                    .attr("width", labelWidth)
+                    .attr("height", labelHeight)
+                    .attr("transform", `translate(${sliceRadius * Math.sin(centerAngle)},${-sliceRadius * Math.cos(centerAngle)}) rotate(${centerAngle * 180 / Math.PI - 90})`);
+
+                // Add text
+                const text = elem.append("text")
+                    .attr("class", "slice-text")
+                    .attr("transform", `translate(${sliceRadius * Math.sin(centerAngle)},${-sliceRadius * Math.cos(centerAngle)}) rotate(${centerAngle * 180 / Math.PI - 90})`)
+                    .attr("text-anchor", "middle")
+                    .attr("dominant-baseline", "middle");
+
+                // Split text into two lines if needed
+                const words = d.data.split(' ');
+                if (words.length > 2) {
+                    text.append("tspan")
+                        .attr("x", 0)
+                        .attr("dy", "-0.6em")
+                        .text(words.slice(0, 2).join(' '));
+                    text.append("tspan")
+                        .attr("x", 0)
+                        .attr("dy", "1.2em")
+                        .text(words.slice(2).join(' '));
+                } else {
+                    text.text(d.data);
+                }
+            });
+        }
+    async function updateWheel() {
+            try {
+                const mongodb = app.currentUser.mongoClient("mongodb-atlas");
+                const participantsCollection = mongodb.db("spin_the_wheel").collection("participants");
+                const rufflesCollection = mongodb.db("spin_the_wheel").collection("ruffles");
+                
+                console.log("Fetching active ruffles...");
+                const activeRuffles = await rufflesCollection.find({ status: "active" });
+                console.log("Active ruffles:", activeRuffles);
+                
+                const activeRuffleIds = activeRuffles.map(ruffle => ruffle._id);
+                console.log("Active ruffle IDs:", JSON.stringify(activeRuffleIds));
+
+                console.log("Fetching active participants...");
+                const activeParticipants = await participantsCollection.find({
+                    ruffle_ids: { $in: activeRuffleIds }
+                });
+                console.log("Active participants:", activeParticipants);
+
+                if (activeParticipants.length === 0) {
+                    console.log("No active participants found. Using default items.");
+                    wheelItems = ["Participant1", "Participant2", "Participant3", "Participant4", "Participant5", "Participant6", "Participant7", "Participant8"];
+                    
+                    
+                } else {
+                    wheelItems = activeParticipants.map(p => `${p.participant.first_name} ${p.participant.last_name} @ ${p.participant.company}`);
+                    
+                    
+                    console.log("Wheel items:", wheelItems);
+                }
+
+                rebuildWheel(wheelItems);
+            
+            
+            } catch (error) {
+                console.error("Error updating wheel:", error);
+                wheelItems = ["Error1", "Error2", "Error3", "Error4", "Error5", "Error6", "Error7", "Error8"];
+            }
+    }
+
+        setupChangeStream();
+
+        let currentRotation = 0;
         let isSpinning = false;
         let tickSound;
 
-        // Create and load the audio
         function loadTickSound() {
             tickSound = new Audio("https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3");
             tickSound.load();
@@ -100,66 +250,69 @@
         loadTickSound();
 
         function playTickSound() {
-            if (tickSound && tickSound.readyState === 4) {  // 4 means HAVE_ENOUGH_DATA
+            if (tickSound && tickSound.readyState === 4) {
                 tickSound.currentTime = 0;
                 tickSound.play().catch(e => console.error("Error playing sound:", e));
             }
         }
 
-        function spinWheel() {
-            if (isSpinning) return;
-            isSpinning = true;
+        function resetWheelPosition() {
+            return new Promise((resolve) => {
+                wheelGroup.transition()
+                    .duration(1000)
+                    .ease(d3.easeQuadOut)
+                    .attrTween("transform", () => {
+                        const startRotation = currentRotation;
+                        return (t) => {
+                            currentRotation = startRotation * (1 - t);
+                            return `rotate(${currentRotation})`;
+                        };
+                    })
+                    .on("end", () => {
+                        currentRotation = 0;
+                        resolve();
+                    });
+            });
+        }
 
+        async function spinWheel() {
+            if (isSpinning) return;
+
+            if (currentRotation !== 0) {
+                const confirmSpin = confirm("Do you want to spin again? The wheel will reset to its initial position.");
+                if (!confirmSpin) return;
+                await resetWheelPosition();
+            }
+
+            isSpinning = true;
             document.getElementById('spinButton').disabled = true;
 
             const spinDuration = 5000;
-            const spinRotation = Math.floor(Math.random() * 360) + 720;
+            const spinRotation = Math.floor(Math.random() * 360) + 720; // At least 2 full rotations
 
-            rotation = (rotation + spinRotation) % 360;
-
-            // Play tick sounds
             const tickInterval = setInterval(playTickSound, 100);
 
             wheelGroup.transition()
                 .duration(spinDuration)
                 .ease(d3.easeQuadInOut)
                 .attrTween("transform", () => {
-                    return (t) => `rotate(${t * spinRotation})`;
+                    return (t) => {
+                        currentRotation = t * spinRotation;
+                        return `rotate(${currentRotation})`;
+                    };
                 })
-                .on("end", () => {
+                .on("end", async () => {
                     isSpinning = false;
-                    clearInterval(tickInterval);  // Stop the ticking sound
-                    const normalizedRotation = (360 - (rotation % 360)) % 360;
+                    clearInterval(tickInterval);
+                    currentRotation = currentRotation % 360; // Normalize to 0-359 degrees
+                    const normalizedRotation = (360 - currentRotation) % 360;
                     const result = wheelItems[Math.floor(normalizedRotation / (360 / wheelItems.length))];
                     alert(`You landed on: ${result}`);
-                    var data = JSON.stringify({
-                                "collection": "winners",
-                                "database": "spin_the_wheel",
-                                "dataSource": "ILCluster",
-                                "document" : {
-                                    "participant": result,
-                                }
-                            });
-                    var config = {
-                        method: 'post',
-                        url: 'https://eu-central-1.aws.data.mongodb-api.com/app/data-kzqhehl/endpoint/data/v1/action/insertOne',
-                        headers: {
-                        'Content-Type': 'application/json',
-                        // 'Access-Control-Request-Headers': '*',
-                        'api-key': 'OfPVN7KWX0xL1EF1EOLdU1Ge1QqZEE7vyuyIkM2TkjWfiFQUQ9rm5zWI1xlolGZ4',
-                        },
-                        data: data
-                    };
-                    axios(config)
-                        .then(function (response) {
-                            console.log(JSON.stringify(response.data));
-                        })
-                        .catch(function (error) {
-                            console.log(error);
-                        });
-                    });
-        
-
+                    const mongodb = app.currentUser.mongoClient("mongodb-atlas");
+                    const winnersCollection = mongodb.db("spin_the_wheel").collection("winners")
+                    await winnersCollection.insertOne({ winner: result, date: new Date() });
+                    document.getElementById('spinButton').disabled = false;
+                });
         }
     </script>
 </body>

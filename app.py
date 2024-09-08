@@ -99,25 +99,48 @@ def transform_image_to_text(image, format, selected_llm):
     except Exception as e:
         st.error(f"Error: {e}")
 
+@st.experimental_dialog("Confirm new ruffle")
+def new_ruffle_confirm():
+    st.write("Are you sure you want to start a new ruffle?")
+    if st.button("Yes"):
+        new_ruffle_id()
+        st.rerun()
+    else:
+        return False
+
 def new_ruffle_id():
+
     ruffle_id =  ObjectId()
     st.session_state.ruffle_id = ruffle_id
+    ruffles = db['ruffles']
+    ruffles.update_many({"api_key": st.session_state.api_key, "status" : "active"}, {"$set": {"status": "inactive"}})
+    ruffles.insert_one({"_id": ruffle_id, "api_key": st.session_state.api_key, "status": "active"})
     return ruffle_id
 
 # Access key input
-st.session_state.api_key = st.text_input("Enter access key", type="password")
+if not st.session_state.api_key:
+    st.session_state.api_key = st.text_input("Enter access key", type="password")
 
 if st.session_state.api_key and check_access_key(st.session_state.api_key):
     # Main application logic
-    selected_llm = st.selectbox("Select LLM Model", ["GPT-4o", "Claude3"],index=0)
+    selected_llm = "GPT-4o"
 
-    col1 , col2 = st.columns([1,1])
+    # if not 'participants' in st.session_state:
+    #     st.session_state.participants = []
+       
+    ruffles = db['ruffles']
+    active_ruffle = ruffles.find_one({'api_key' :  st.session_state.api_key, "status": "active"})
 
-    if not 'participants' in st.session_state:
-        st.session_state.participants = []
+        
+    if active_ruffle:
+        st.session_state.ruffle_id = active_ruffle['_id']
+        st.info(f"Active ruffle found: {active_ruffle['_id']}")
+       
+    else:
+        st.info("No active ruffle found, Start new...")
 
-    if not 'ruffle_id' in st.session_state:
-        st.session_state.ruffle_id = new_ruffle_id()
+    if st.button("New ruffle"):
+        new_ruffle_confirm()      
 
     def register_to_mongodb(participant):
         st.write("Locating participant in MongoDB...")
@@ -129,11 +152,12 @@ if st.session_state.api_key and check_access_key(st.session_state.api_key):
             participant['ruffle_ids'] = [st.session_state.ruffle_id]
             participant['event'] = st.session_state.api_key
             participants.insert_one(participant)
-        
+            st.rerun()
         else:
             st.write("Participant found, updating registration count...")
             if located_participant['registration_count'] < 2 and st.session_state.ruffle_id not in located_participant['ruffle_ids']:
                 participants.update_one({"_id": located_participant['_id']}, {"$inc": {"registration_count": 1}, "$push" : {"ruffle_ids": st.session_state.ruffle_id}})
+                st.rerun()
             else:
                 st.write("Participant already registered twice")
                 st.error("Participant already registered twice")
@@ -143,18 +167,18 @@ if st.session_state.api_key and check_access_key(st.session_state.api_key):
         st.write(participant)
         if st.button("Confirm Save to MongoDB"):
             register_to_mongodb(participant)
-            st.session_state.participants.append(f"{participant['participant']['first_name']} {participant['participant']['last_name']} - {participant['participant']['company']}")
             wheel_h = 420
-            st.rerun()
+            #st.rerun()
 
-    with col1:
-        if st.button("Enable spin the wheel"):
-            wheel_h = 500
-            is_disabled = True
+    # with col1:
+    #     if st.button("Enable spin the wheel"):
+    #         wheel_h = 500
+    #         is_disabled = True
             
-        components.iframe(f"https://pash10g.github.io/spin-the-wheel?participants={json.dumps(st.session_state.participants)}", height=wheel_h, scrolling=False)
+    #     components.iframe(f"https://pash10g.github.io/spin-the-wheel?participants={json.dumps(st.session_state.participants)}", height=wheel_h, scrolling=False)
 
-    with col2:   
+    # with col2: 
+    if 'ruffle_id' in st.session_state: 
         st.header('Register participants')
         st.subheader("Take a picture as a participant, please hold your name badge in a visible location") 
 
@@ -164,52 +188,57 @@ if st.session_state.api_key and check_access_key(st.session_state.api_key):
             if image:
                 img = Image.open(io.BytesIO(image.getvalue()))
             
-            reg, clear = st.columns([1,1])
-            with reg:
-                if st.button("Register") and image:
-                    with st.status("AI Analysis...", expanded=True) as status:
-                        print('before transform ' + selected_llm)
-                        participant = transform_image_to_text(img, img.format, selected_llm)
-                        print(participant)
-                        status.update(label="AI Vision complete!", state="complete", expanded=False)
-                        if 'participant' not in participant:
-                            st.error("Participant not found in the response")
+    
+            if st.button("Register") and image:
+                with st.status("AI Analysis...", expanded=True) as status:
+                    print('before transform ' + selected_llm)
+                    participant = transform_image_to_text(img, img.format, selected_llm)
+                    print(participant)
+                    status.update(label="AI Vision complete!", state="complete", expanded=False)
+                    if 'participant' not in participant:
+                        st.error("Participant not found in the response")
+                
+                
+                    if participant['participant']['first_name'] == "":
+                        st.error("Participant first name not detected")
                     
+                    if participant['participant']['last_name'] == "":
+                        st.error("Participant last name not detected")
                     
-                        if participant['participant']['first_name'] == "":
-                            st.error("Participant first name not detected")
-                        
-                        if participant['participant']['last_name'] == "":
-                            st.error("Participant last name not detected")
-                        
-                        if participant['participant']['company'] == "":
-                            st.error("Participant company not detected")
-                        add_participant(participant, img)
-                else:
-                    st.warning("Please take a picture first")
+                    if participant['participant']['company'] == "":
+                        st.error("Participant company not detected")
+                    add_participant(participant, img)
+            else:
+                st.warning("Please take a picture first")
         with manual_input:
-            reg_first_name = st.text_input('Enter participant first name')
-            reg_last_name = st.text_input('Enter participant last name')
-            reg_company = st.text_input('Enter participant company')
+            # reg_first_name = st.text_input('Enter participant first name')
+            # reg_last_name = st.text_input('Enter participant last name')
+            # reg_company = st.text_input('Enter participant company')
 
-            if st.button("Add Manually") and reg_first_name and reg_last_name and reg_company:
-                participant = {
-                    "participant": {
-                        "first_name": reg_first_name,
-                        "last_name": reg_last_name,
-                        "company": reg_company
-                    }
-                }
-                add_participant(participant, None)
+            # if st.button("Add Manually") and reg_first_name and reg_last_name and reg_company:
+            #     participant = {
+            #         "participant": {
+            #             "first_name": reg_first_name,
+            #             "last_name": reg_last_name,
+            #             "company": reg_company
+            #         }
+            #     }
+                with st.form("Manual Add"):
+                    reg_first_name = st.text_input('Enter participant first name')
+                    reg_last_name = st.text_input('Enter participant last name')
+                    reg_company = st.text_input('Enter participant company')
+                    if st.form_submit_button("Add Manually") and reg_first_name and reg_last_name and reg_company:
+                        participant = {
+                            "participant": {
+                                "first_name": reg_first_name,
+                                "last_name": reg_last_name,
+                                "company": reg_company
+                            }
+                        }
+                        add_participant(participant, None)
                 
-        with clear:
-            if st.button("New ruffle"):
-                st.session_state.participants = []
-                st.session_state.ruffle_id = new_ruffle_id()
-                image = None
-                st.rerun()
                 
-        for participant in st.session_state.participants:
-            st.markdown(f"- {participant}")
+        for participant in participants.find({"event": st.session_state.api_key, "ruffle_ids": st.session_state.ruffle_id}):
+            st.markdown(f" - {participant['participant']['first_name']} {participant['participant']['last_name']} - {participant['participant']['company']}")
 else:
     st.error("Invalid or missing access key. Please enter a valid access key to proceed.")
