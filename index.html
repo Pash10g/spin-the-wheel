@@ -56,6 +56,52 @@
             stroke: #000;
             stroke-width: 0.5px;
         }
+        #modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 300px;
+            text-align: center;
+        }
+        .spin-button-area{
+            display: flex;
+            justify-content: center;
+            flex-direction: column;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        #eventCodeInput {
+            margin: 10px 0;
+            padding: 5px;
+            width: 90%;
+        }
+        #submitEventCode {
+            margin-top: 10px;
+            padding: 10px 20px;
+            background-color: #00ED64;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #activeRuffleId {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -63,7 +109,18 @@
         <div id="arrow"></div>
         <svg id="wheel" width="600" height="600"></svg>
     </div>
-    <button id="spinButton" onclick="spinWheel()">Spin</button>
+    <div class="spin-button-area">
+        <button id="spinButton" onclick="spinWheel()">Spin</button>
+        <div id="activeRuffleId"></div>
+    </div>
+</div>
+    <div id="modal">
+        <div class="modal-content">
+            <h2>Enter Event Code</h2>
+            <input type="text" id="eventCodeInput" placeholder="Enter event code">
+            <button id="submitEventCode" onclick="submitEventCode()">Submit</button>
+        </div>
+    </div>
 
     <script>
         const REALM_APP_ID = 'spin-the-wheel-gdesxmh';
@@ -84,6 +141,22 @@
 
         const wheelGroup = svg.append("g");
 
+        let currentEventCode = '';
+
+        window.onload = function() {
+            document.getElementById('modal').style.display = 'block';
+        }
+
+        function submitEventCode() {
+            const eventCodeInput = document.getElementById('eventCodeInput');
+            currentEventCode = eventCodeInput.value.trim();
+            if (currentEventCode) {
+                document.getElementById('modal').style.display = 'none';
+                updateWheel(currentEventCode);
+            } else {
+                alert('Please enter a valid event code.');
+            }
+        }
 
         async function loginAnonymous() {
             const user = await app.logIn(Realm.Credentials.anonymous());
@@ -93,7 +166,6 @@
         async function setupChangeStream() {
             const user = await loginAnonymous();
             const mongodb = app.currentUser.mongoClient("mongodb-atlas");
-            await updateWheel();
             const participantsCollection = mongodb.db("spin_the_wheel").collection("participants");
             const rufflesCollection = mongodb.db("spin_the_wheel").collection("ruffles");
 
@@ -104,7 +176,7 @@
             const handleParticipantChange = async (change) => {
                 console.log("Participant change detected:", change);
                 if (change.operationType === 'insert' || change.operationType === 'update') {
-                    await updateWheel();
+                    await updateWheel(currentEventCode);
                 }
             };
 
@@ -113,7 +185,7 @@
                 console.log("Ruffle change detected:", change);
                 if (change.operationType === 'insert') {
                     console.log("New ruffle detected. Resetting wheel...");
-                    await updateWheel();
+                    await updateWheel(currentEventCode);
                     resetWheel();
                 }
             };
@@ -196,45 +268,49 @@
                 }
             });
         }
-    async function updateWheel() {
+
+        async function updateWheel(eventCode) {
             try {
                 const mongodb = app.currentUser.mongoClient("mongodb-atlas");
                 const participantsCollection = mongodb.db("spin_the_wheel").collection("participants");
                 const rufflesCollection = mongodb.db("spin_the_wheel").collection("ruffles");
                 
                 console.log("Fetching active ruffles...");
-                const activeRuffles = await rufflesCollection.find({ status: "active" });
+                const activeRuffles = await rufflesCollection.find({ status: "active", api_key: eventCode });
                 console.log("Active ruffles:", activeRuffles);
+                
+                if (activeRuffles.length > 0) {
+                    const activeRuffleId = activeRuffles[0]._id;
+                    document.getElementById('activeRuffleId').textContent = `Active Ruffle ID: ${activeRuffleId}`;
+                } else {
+                    document.getElementById('activeRuffleId').textContent = 'No active ruffle found';
+                }
                 
                 const activeRuffleIds = activeRuffles.map(ruffle => ruffle._id);
                 console.log("Active ruffle IDs:", JSON.stringify(activeRuffleIds));
 
                 console.log("Fetching active participants...");
                 const activeParticipants = await participantsCollection.find({
-                    ruffle_ids: { $in: activeRuffleIds }
+                    ruffle_ids: { $in: activeRuffleIds },
+                    event: eventCode
                 });
                 console.log("Active participants:", activeParticipants);
 
                 if (activeParticipants.length === 0) {
                     console.log("No active participants found. Using default items.");
                     wheelItems = ["Participant1", "Participant2", "Participant3", "Participant4", "Participant5", "Participant6", "Participant7", "Participant8"];
-                    
-                    
                 } else {
                     wheelItems = activeParticipants.map(p => `${p.participant.first_name} ${p.participant.last_name} @ ${p.participant.company}`);
-                    
-                    
                     console.log("Wheel items:", wheelItems);
                 }
 
                 rebuildWheel(wheelItems);
-            
-            
             } catch (error) {
                 console.error("Error updating wheel:", error);
                 wheelItems = ["Error1", "Error2", "Error3", "Error4", "Error5", "Error6", "Error7", "Error8"];
+                document.getElementById('activeRuffleId').textContent = 'Error fetching active ruffle';
             }
-    }
+        }
 
         setupChangeStream();
 
@@ -278,11 +354,19 @@
         async function spinWheel() {
             if (isSpinning) return;
 
+            if (!currentEventCode) {
+                alert("Please enter an event code before spinning the wheel.");
+                document.getElementById('modal').style.display = 'block';
+                return;
+            }
+
             if (currentRotation !== 0) {
                 const confirmSpin = confirm("Do you want to spin again? The wheel will reset to its initial position.");
                 if (!confirmSpin) return;
                 await resetWheelPosition();
             }
+
+            await updateWheel(currentEventCode);
 
             isSpinning = true;
             document.getElementById('spinButton').disabled = true;
@@ -310,7 +394,7 @@
                     alert(`You landed on: ${result}`);
                     const mongodb = app.currentUser.mongoClient("mongodb-atlas");
                     const winnersCollection = mongodb.db("spin_the_wheel").collection("winners")
-                    await winnersCollection.insertOne({ winner: result, date: new Date() });
+                    await winnersCollection.insertOne({ winner: result, date: new Date(), event: currentEventCode });
                     document.getElementById('spinButton').disabled = false;
                 });
         }
